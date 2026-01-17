@@ -1,108 +1,118 @@
 import streamlit as st
 from sqlalchemy import create_engine, text
-import os
+import os, base64
 
 # --- DATABASE SETUP ---
-db_url = os.getenv("DATABASE_URL")
-if db_url and db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
-if not db_url: db_url = "sqlite:///local_test.db"
-engine = create_engine(db_url)
+engine = create_engine("sqlite:///local_test.db")
+st.set_page_config(page_title="The Private Collection", layout="wide")
 
-
-def init_db():
-    with engine.connect() as conn:
-        # Projects Table
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS photography_projects (
-                id SERIAL PRIMARY KEY,
-                client_email TEXT UNIQUE,
-                project_name TEXT,
-                status TEXT,
-                progress INT,
-                gallery_link TEXT
-            );
-        """))
-        # NEW: Photos Table for Proofing
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS project_photos (
-                id SERIAL PRIMARY KEY,
-                client_email TEXT,
-                image_data TEXT,
-                is_favorite BOOLEAN DEFAULT FALSE
-            );
-        """))
-        conn.commit()
-
-
-init_db()
-
-# --- UI STYLING ---
-st.set_page_config(page_title="Client Portal", page_icon="📸", layout="wide")
+# --- HIGH-FASHION CSS (1.12 COMPATIBLE) ---
 st.markdown("""
     <style>
-    .stProgress > div > div > div > div { background-color: #000; }
-    h1, h2, h3 { font-family: 'serif'; }
-    .thumb-container { border: 1px solid #eee; padding: 10px; border-radius: 10px; text-align: center; }
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;1,300&family=Montserrat:wght@200;400&display=swap');
+
+    /* Global Styling */
+    .stApp { background-color: #ffffff; }
+    header { visibility: hidden; }
+
+    /* Typography */
+    h1 { font-family: 'Cormorant Garamond', serif !important; color: #1a1a1a; font-weight: 300 !important; font-size: 4rem !important; margin-bottom: 0; }
+    p, span, label { font-family: 'Montserrat', sans-serif !important; letter-spacing: 2px; color: #666; font-size: 10px; text-transform: uppercase; }
+
+    /* Hide Standard Widget Labels for Glamour */
+    label[data-testid="stWidgetLabel"] { display: none !important; }
+
+    /* Hero Section */
+    .hero-container { text-align: center; padding: 100px 0 60px 0; border-bottom: 1px solid #f2f2f2; margin-bottom: 50px; }
+
+    /* Luxury Gallery Cards */
+    .img-card { 
+        width: 100%; aspect-ratio: 4/5; object-fit: cover; 
+        transition: all 0.8s cubic-bezier(0.2, 1, 0.3, 1);
+        margin-bottom: 20px;
+    }
+    .not-selected { filter: grayscale(100%); opacity: 0.2; transform: scale(0.98); }
+    .selected { filter: grayscale(0%); opacity: 1; border-bottom: 2px solid #1a1a1a; }
+
+    /* Minimalist Ghost Buttons */
+    .stButton>button {
+        border: none !important; background: transparent !important;
+        color: #1a1a1a !important; text-decoration: underline;
+        text-underline-offset: 6px; font-size: 9px !important;
+        letter-spacing: 2px; padding: 0 !important; transition: 0.3s;
+    }
+    .stButton>button:hover { color: #888 !important; letter-spacing: 4px; }
+
+    /* Floating Selection Bar */
+    .selection-footer {
+        position: fixed; bottom: 0; left: 0; width: 100%; background: white;
+        padding: 20px; border-top: 1px solid #eee; text-align: center; z-index: 1000;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("Photography Client Portal")
-email_input = st.text_input("Enter your email to access your project", placeholder="client@email.com")
 
-if email_input:
-    email = email_input.strip()
+def get_base64(path):
+    if os.path.exists(path):
+        with open(path, "rb") as f: return base64.b64encode(f.read()).decode()
+    return None
+
+
+# --- APP LOGIC ---
+if 'logged_in' not in st.session_state:
+    st.markdown("<div class='hero-container'><p>Private Access</p><h1>The Collection</h1></div>",
+                unsafe_allow_html=True)
+    _, col, _ = st.columns([1, 1, 1])
+    with col:
+        # Placeholder acts as the label for a cleaner look
+        email = st.text_input("Access Code", placeholder="ENTER YOUR EMAIL").strip()
+        if st.button("OPEN GALLERY") and email:
+            st.session_state.logged_in = email
+            st.experimental_rerun()  # FIXED FOR 1.12
+else:
+    email = st.session_state.logged_in
     with engine.connect() as conn:
-        result = conn.execute(
-            text("SELECT * FROM photography_projects WHERE client_email = :email"),
-            {"email": email}
-        ).mappings().fetchone()
+        project = conn.execute(text("SELECT * FROM photography_projects WHERE client_email = :e"),
+                               {"e": email}).mappings().fetchone()
+        photos = conn.execute(text("SELECT * FROM project_photos WHERE client_email = :e"),
+                              {"e": email}).mappings().fetchall()
 
-    if result:
-        # 1. Status Section
-        st.subheader(f"Project: {result['project_name']}")
-        col1, col2 = st.columns([1, 2])
-        col1.metric("Current Stage", result['status'])
-        col2.write(f"**Overall Progress: {result['progress']}%**")
-        col2.progress(result['progress'] / 100)
+    if project:
+        # Immersive Header
+        st.markdown(f"""
+            <div class='hero-container'>
+                <p>{project['status']} &nbsp; // &nbsp; {project['project_name']}</p>
+                <h1>Selections</h1>
+                <p style='margin-top: 20px;'>Balance Due: ${project['total_price'] - project['amount_paid']:,.2f}</p>
+            </div>
+        """, unsafe_allow_html=True)
 
-        # 2. Final Gallery Section
-        if result['progress'] >= 100:
-            st.success("### ✨ Your Final Gallery is Ready")
-            if result['gallery_link']:
-                st.link_button("Download High-Res Images", result['gallery_link'], use_container_width=True)
-
-        st.divider()
-
-        # 3. PROOFING SECTION (Favorites)
-        st.header("Photo Proofs")
-        st.write("Select the ❤️ on images you would like me to retouch.")
-
-        with engine.connect() as conn:
-            photos = conn.execute(
-                text("SELECT id, image_data, is_favorite FROM project_photos WHERE client_email = :e"),
-                {"e": email}
-            ).mappings().fetchall()
-
+        # 2-Column Luxury Grid
         if photos:
-            # Display photos in a 4-column grid
-            cols = st.columns(4)
-            for idx, photo in enumerate(photos):
-                with cols[idx % 4]:
-                    st.image(f"data:image/jpeg;base64,{photo['image_data']}", use_container_width=True)
+            cols = st.columns(2)
+            for i, row in enumerate(photos):
+                with cols[i % 2]:
+                    img_b64 = get_base64(row['file_path'])
+                    if img_b64:
+                        is_fav = row['is_favorite']
+                        css_class = "selected" if is_fav else "not-selected"
+                        st.markdown(f"<img src='data:image/jpeg;base64,{img_b64}' class='img-card {css_class}'>",
+                                    unsafe_allow_html=True)
 
-                    # Heart Button Logic
-                    btn_label = "❤️ Favorited" if photo['is_favorite'] else "🤍 Favorite"
-                    if st.button(btn_label, key=f"photo_{photo['id']}"):
-                        new_fav = not photo['is_favorite']
-                        with engine.connect() as conn:
-                            conn.execute(
-                                text("UPDATE project_photos SET is_favorite = :f WHERE id = :id"),
-                                {"f": new_fav, "id": photo['id']}
-                            )
-                            conn.commit()
-                        st.rerun()
-        else:
-            st.info("No proofs have been uploaded for your session yet.")
+                        btn_label = "— REMOVE FROM SELECTION" if is_fav else "+ ADD TO SELECTION"
+                        # Key must be unique; using rowid if id column is missing
+                        if st.button(btn_label, key=f"btn_{i}"):
+                            with engine.connect() as conn:
+                                conn.execute(text("UPDATE project_photos SET is_favorite = :f WHERE file_path = :p"),
+                                             {"f": not is_fav, "p": row['file_path']})
+                                conn.commit()
+                            st.experimental_rerun()  # FIXED FOR 1.12
+
+        # Bottom selection count
+        fav_count = sum(1 for r in photos if r['is_favorite'])
+        st.markdown(f"<div class='selection-footer'>{fav_count} IMAGES COLLECTED</div>", unsafe_allow_html=True)
     else:
-        st.error("No project found for that email.")
+        st.error("Project not found.")
+        if st.button("LOGOUT"):
+            del st.session_state.logged_in
+            st.experimental_rerun()
