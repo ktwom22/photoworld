@@ -64,9 +64,12 @@ if email_input:
 
         if result['progress'] >= 100:
             st.success("🎉 Your photos are ready!")
-            st.link_button("Download Gallery", result['gallery_link'])
-        else:
-            st.info("We're still working our magic on your photos! Check back soon.")
+
+            # Check if there is actually a link to show
+            if result['gallery_link']:
+                st.link_button("Download Gallery", result['gallery_link'])
+            else:
+                st.warning("The gallery link hasn't been added yet. Please contact the photographer.")
     else:
         st.info("No project found for that email. Contact your photographer.")
 
