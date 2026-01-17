@@ -2,22 +2,18 @@ import streamlit as st
 from sqlalchemy import create_engine, text
 import os
 
-# 1. Database Connection & URL Fix
+# --- 1. DATABASE CONFIGURATION ---
 db_url = os.getenv("DATABASE_URL")
-
-# --- CRITICAL FIX FOR RAILWAY/SQLALCHEMY ---
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-# Fallback for local testing
 if not db_url:
-    db_url = "postgresql://postgres:password@localhost:5432/railway"
+    db_url = "sqlite:///local_test.db"
 
 engine = create_engine(db_url)
 
 
-# 2. AUTO-INIT: Create table if it doesn't exist
-# We wrap this in a function to keep it clean
+# --- 2. DATABASE INITIALIZATION ---
 def init_db():
     with engine.connect() as conn:
         conn.execute(text("""
@@ -35,63 +31,98 @@ def init_db():
 
 init_db()
 
-# --- STREAMLIT UI ---
-st.set_page_config(page_title="Photo Client Portal", layout="wide")
-st.title("📸 Photo Client Portal")
+# --- 3. ELEGANT UI STYLING ---
+st.set_page_config(page_title="Portfolio | Client Portal", page_icon="📸", layout="centered")
 
-# Sidebar for Login
-with st.sidebar:
-    st.header("Client Login")
-    email_input = st.text_input("Enter your email")
+# Custom CSS for a clean, editorial look
+st.markdown("""
+    <style>
+    .main { background-color: #fcfcfc; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #eee; }
+    .stProgress > div > div > div > div { background-color: #1a1a1a; }
+    h1 { font-family: 'serif'; font-weight: 400; color: #1a1a1a; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 4. CLIENT DASHBOARD LOGIC ---
+st.title("Photography Client Portal")
+st.write("Welcome back. Please sign in to view your project status.")
+
+# Clean Login Interface
+with st.container():
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        email_input = st.text_input("Client Email Address", placeholder="hello@yourname.com")
 
 if email_input:
     with engine.connect() as conn:
-        # Use .mappings() so you can access columns by name (result.status)
         result = conn.execute(
             text("SELECT * FROM photography_projects WHERE client_email = :email"),
-            {"email": email_input}
+            {"email": email_input.strip()}
         ).mappings().fetchone()
 
     if result:
-        st.header(f"Project: {result['project_name']}")
+        st.divider()
+        st.markdown(f"### {result['project_name']}")
 
-        # Display Progress
-        col1, col2 = st.columns(2)
-        col1.metric("Status", result['status'])
-        col2.metric("Progress", f"{result['progress']}%")
+        # Professional Metric Display
+        m1, m2 = st.columns(2)
+        with m1:
+            st.metric("Current Stage", result['status'])
+        with m2:
+            st.metric("Completion", f"{result['progress']}%")
 
         st.progress(result['progress'] / 100)
 
+        st.write("---")
+
+        # Action Center
         if result['progress'] >= 100:
-            st.success("🎉 Your photos are ready!")
-
-            # Check if there is actually a link to show
+            st.balloons()
+            st.success("### Your Collection is Ready")
+            st.write("We've finished the final retouches. Your high-resolution gallery is now live.")
             if result['gallery_link']:
-                st.link_button("Download Gallery", result['gallery_link'])
+                st.link_button("View Final Gallery", result['gallery_link'], use_container_width=True)
             else:
-                st.warning("The gallery link hasn't been added yet. Please contact the photographer.")
+                st.info("Your gallery link is being generated. Please check back in a few moments.")
+        else:
+            st.info(
+                f"**Update:** We are currently in the **{result['status']}** phase. You will receive an email once the final gallery is ready for download.")
+
     else:
-        st.info("No project found for that email. Contact your photographer.")
+        st.error("No active project found for this email. Please verify with your photographer.")
 
-# --- ADMIN SECTION ---
-st.divider()
-with st.expander("Admin: Manage Clients"):
-    with st.form("add_client"):
-        c_email = st.text_input("Client Email")
-        c_name = st.text_input("Project Name")
-        c_status = st.selectbox("Initial Status", ["Sorting", "Editing", "Final Review"])
-        c_progress = st.slider("Initial Progress", 0, 100, 10)
+# --- 5. DISCRETE ADMIN PANEL ---
+st.sidebar.markdown("---")
+with st.sidebar.expander("✨ Photographer Admin"):
+    st.write("Update client progress here.")
+    with st.form("admin_form", clear_on_submit=True):
+        adm_email = st.text_input("Client Email")
+        adm_name = st.text_input("Project Name")
+        adm_status = st.selectbox("Current Status", ["Pre-Production", "Sorting", "Initial Edits", "Final Retouching",
+                                                     "Ready for Delivery"])
+        adm_progress = st.slider("Progress %", 0, 100, 10)
+        adm_link = st.text_input("Gallery Link (Dropbox/Pic-Time URL)")
 
-        if st.form_submit_button("Create/Update Project"):
+        if st.form_submit_button("Save Project Changes"):
             with engine.connect() as conn:
                 conn.execute(
                     text("""
-                        INSERT INTO photography_projects (client_email, project_name, status, progress) 
-                        VALUES (:e, :n, :s, :p) 
+                        INSERT INTO photography_projects (client_email, project_name, status, progress, gallery_link) 
+                        VALUES (:e, :n, :s, :p, :l) 
                         ON CONFLICT (client_email) DO UPDATE 
-                        SET status = EXCLUDED.status, progress = EXCLUDED.progress
+                        SET status = EXCLUDED.status, 
+                            progress = EXCLUDED.progress, 
+                            gallery_link = EXCLUDED.gallery_link,
+                            project_name = EXCLUDED.project_name
                     """),
-                    {"e": c_email, "n": c_name, "s": c_status, "p": c_progress}
+                    {"e": adm_email.strip(), "n": adm_name, "s": adm_status, "p": adm_progress, "l": adm_link}
                 )
                 conn.commit()
-            st.success(f"Project for {c_email} updated!")
+            st.success("Client data synced.")
+            st.rerun()
+
+# --- 6. FOOTER ---
+st.markdown(
+    "<br><br><p style='text-align: center; color: #aaa; font-size: 0.8em;'>© 2026 Portsmouth Photography Studio</p>",
+    unsafe_allow_html=True)
